@@ -1,88 +1,227 @@
 #include <iostream>
 #include <fstream>
-#include <string>
 #include <vector>
+#include <string>
+#include <sstream>
+#include <iomanip>
 #include <limits>
 
-class Flashcard {
+using namespace std;
+
+class FlashCard {
 public:
-    std::string question;
-    std::string answer;
-    bool easy;  // true = easy, false = hard
+    string front;
+    string back;
+
+    FlashCard(string f = "", string b = "") : front(f), back(b) {}
 };
 
-class FlashcardDeck {
+class CardRecord {
 public:
-    std::vector<Flashcard> cards;
+    FlashCard card;
+    int timesReviewed = 0;
+    int timesCorrect = 0;
 
-    // Load flashcards from a file (format: question|answer|easyFlag)
-    void loadFromFile(const std::string& filename) {
-        std::ifstream in_file(filename.c_str());
-        if (!in_file) {
-            std::cout << "No existing file found. Starting with an empty deck.\n";
-            return;
-        }
-        std::string line;
-        while (std::getline(in_file, line)) {
-            if (line.empty()) continue;
-            size_t p1 = line.find('|'), p2 = line.find('|', p1 + 1);
-            if (p1 == std::string::npos || p2 == std::string::npos) continue;
-            Flashcard card;
-            card.question = line.substr(0, p1);
-            card.answer = line.substr(p1 + 1, p2 - p1 - 1);
-            char flag = line[p2 + 1];
-            card.easy = (flag == 'e' || flag == 'E');
-            cards.push_back(card);
-        }
-        in_file.close();
+    double getAccuracy() const {
+        return timesReviewed > 0 ? (timesCorrect * 100.0 / timesReviewed) : 0;
+    }
+};
+
+class Deck {
+private:
+    vector<CardRecord> cards;
+
+    string trim(const string& str) {
+        size_t first = str.find_first_not_of(" \t");
+        if (first == string::npos) return "";
+        size_t last = str.find_last_not_of(" \t");
+        return str.substr(first, (last-first+1));
     }
 
-    // Save flashcards to a file
-    void saveToFile(const std::string& filename) {
-        std::ofstream out_file(filename.c_str());
-        for (const auto& card : cards) {
-            out_file << card.question << "|" << card.answer << "|";
-            out_file << (card.easy ? 'e' : 'h') << "\n";
+public:
+    void addCard(const FlashCard& card) {
+        if (!card.front.empty() && !card.back.empty()) {
+            CardRecord cr;
+            cr.card = card;
+            cards.push_back(cr);
+            cout << "Card added successfully!\n";
         }
-        out_file.close();
+    }
+
+    vector<CardRecord>& getCards() { return cards; }
+    size_t getCardCount() const { return cards.size(); }
+
+    bool save(const string& filename) {
+        ofstream file(filename);
+        if (!file) {
+            cerr << "Error saving to " << filename << "\n";
+            return false;
+        }
+
+        for (const auto& cr : cards) {
+            file << cr.card.front << "|" << cr.card.back << "|"
+                 << cr.timesReviewed << "|" << cr.timesCorrect << "\n";
+        }
+        cout << "Saved " << cards.size() << " cards to " << filename << "\n";
+        return true;
+    }
+
+    bool load(const string& filename) {
+        ifstream file(filename);
+        if (!file) {
+            cerr << "No save file found, starting fresh\n";
+            return false;
+        }
+
+        cards.clear();
+        string line;
+        while (getline(file, line)) {
+            line = trim(line);
+            if (line.empty()) continue;
+
+            vector<string> parts;
+            stringstream ss(line);
+            string part;
+
+            while (getline(ss, part, '|')) {
+                parts.push_back(part);
+            }
+
+            if (parts.size() != 4) continue;
+
+            try {
+                CardRecord cr;
+                cr.card = FlashCard(parts[0], parts[1]);
+                cr.timesReviewed = stoi(parts[2]);
+                cr.timesCorrect = stoi(parts[3]);
+                cards.push_back(cr);
+            } catch (...) {
+                cerr << "Error parsing card data\n";
+            }
+        }
+        cout << "Loaded " << cards.size() << " cards\n";
+        return true;
+    }
+};
+
+class FlashCardApp {
+private:
+    Deck deck;
+    const string filename = "cards.txt";
+
+    void clearInput() {
+        cin.clear();
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    }
+
+public:
+    FlashCardApp() {
+        deck.load(filename);
+    }
+
+    ~FlashCardApp() {
+        deck.save(filename);
+    }
+
+    void run() {
+        while (true) {
+            cout << "\n===== FLASHCARD =====\n";
+            cout << "1. Create Card\n";
+            cout << "2. Review Cards (" << deck.getCardCount() << " cards)\n";
+            cout << "3. Show Statistics\n";
+            cout << "4. Exit\n";
+            cout << "Choose (1-4): ";
+
+            int choice;
+            cin >> choice;
+            clearInput();
+
+            switch (choice) {
+                case 1: createCard(); break;
+                case 2: reviewCards(); break;
+                case 3: showStatistics(); break;
+                case 4: return;
+                default: cout << "Invalid choice!\n";
+            }
+        }
+    }
+
+    void createCard() {
+        string front, back;
+        cout << "\nEnter front (question): ";
+        getline(cin, front);
+        cout << "Enter back (answer): ";
+        getline(cin, back);
+
+        deck.addCard(FlashCard(front, back));
+    }
+
+    void reviewCards() {
+        if (deck.getCardCount() == 0) {
+            cout << "\nNo cards to review!\n";
+            return;
+        }
+
+        cout << "\n=== REVIEW MODE ===\n";
+        for (auto& cr : deck.getCards()) {
+            cout << "\nQ: " << cr.card.front << "\n";
+            cout << "Press enter to show answer...";
+            cin.ignore();
+            cout << "A: " << cr.card.back << "\n";
+
+            string response;
+            do {
+                cout << "Did you know it? (y/n): ";
+                getline(cin, response);
+            } while (response != "y" && response != "n");
+
+            cr.timesReviewed++;
+            if (response == "y") cr.timesCorrect++;
+
+            cout << "Accuracy: " << fixed << setprecision(1)
+                 << cr.getAccuracy() << "%\n";
+        }
+        cout << "\nReview complete!\n";
+    }
+
+    void showStatistics() {
+        if (deck.getCardCount() == 0) {
+            cout << "\nNo cards available!\n";
+            return;
+        }
+
+        cout << "\n=== STATISTICS ===\n";
+        cout << "Total cards: " << deck.getCardCount() << "\n";
+
+        int totalReviews = 0;
+        int totalCorrect = 0;
+        for (const auto& cr : deck.getCards()) {
+            totalReviews += cr.timesReviewed;
+            totalCorrect += cr.timesCorrect;
+        }
+
+        double overallAccuracy = totalReviews > 0 ?
+            (totalCorrect * 100.0 / totalReviews) : 0;
+
+        cout << "Total reviews: " << totalReviews << "\n";
+        cout << "Overall accuracy: " << fixed << setprecision(1)
+             << overallAccuracy << "%\n";
+
+        cout << "\nCard Details:\n";
+        for (size_t i = 0; i < deck.getCards().size(); i++) {
+            const auto& cr = deck.getCards()[i];
+            cout << "\nCard #" << (i+1) << "\n";
+            cout << "Q: " << cr.card.front << "\n";
+            cout << "Reviews: " << cr.timesReviewed
+                 << " | Correct: " << cr.timesCorrect
+                 << " | Accuracy: " << fixed << setprecision(1)
+                 << cr.getAccuracy() << "%\n";
+        }
     }
 };
 
 int main() {
-    std::cout << "Flashcard Program (Version 2 - With File I/O)\n";
-    FlashcardDeck deck;
-    const std::string filename = "flashcards.txt";
-
-    // Load existing flashcards
-    deck.loadFromFile(filename);
-
-    // Input new flashcards
-    while (true) {
-        Flashcard card;
-        std::cout << "\nEnter question (leave blank to stop adding): ";
-        std::getline(std::cin, card.question);
-        if (card.question.empty()) break;
-        std::cout << "Enter answer: ";
-        std::getline(std::cin, card.answer);
-        card.easy = true;  // default to easy
-        deck.cards.push_back(card);
-    }
-
-    // Review and mark easy/hard
-    std::cout << "\n--- Review Flashcards ---\n";
-    for (auto& card : deck.cards) {
-        std::cout << "Q: " << card.question << "\n";
-        std::cout << "(Press Enter to see answer)"; std::cin.get();
-        std::cout << "A: " << card.answer << "\n";
-        char choice;
-        std::cout << "Mark this card as easy or hard? (e/h): ";
-        std::cin >> choice;
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        card.easy = (choice == 'e' || choice == 'E');
-    }
-
-    // Save to file
-    deck.saveToFile(filename);
-    std::cout << "\nFlashcards saved to " << filename << "\n";
-    return 0;
+    FlashCardApp app;
+    app.run();
+    return 0;
 }
