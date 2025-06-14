@@ -1,133 +1,424 @@
 #include <iostream>
 #include <fstream>
-#include <string>
 #include <vector>
+#include <string>
+#include <sstream>
+#include <iomanip>
 #include <limits>
+#include <cstdlib>
+#include <ctime>
+#include <map>
+#include <algorithm>
+#include <cctype>
 
-// Stores a flashcard (question, answer, hard flag)
-class Flashcard {
+using namespace std;
+
+const int MAX_BOX = 5;
+
+class FlashCard {
 public:
-    std::string question;
-    std::string answer;
-    bool hard;  // true if marked hard
+    string front;
+    string back;
 
-    Flashcard(std::string q="", std::string a="", bool h=false)
-        : question(q), answer(a), hard(h) {}
+    FlashCard(string f = "", string b = "") : front(f), back(b) {}
 };
 
-// Tracks number of correct answers and total questions
-class ScoreTracker {
-public:
-    int totalAsked = 0;
-    int correctAnswers = 0;
+class CardRecord {
+private:
+    FlashCard card;
+    int box = 0;
+    int dueRound = 0;
+    int timesReviewed = 0;
+    int timesCorrect = 0;
 
-    void recordAnswer(bool correct) {
-        totalAsked++;
-        if (correct) correctAnswers++;
+public:
+    FlashCard getCard() const { return card; }
+    void setCard(FlashCard c) { card = c; }
+
+    int getBox() const { return box; }
+    void setBox(int b) { box = b; }
+
+    int getDueRound() const { return dueRound; }
+    void setDueRound(int r) { dueRound = r; }
+
+    int getTimesReviewed() const { return timesReviewed; }
+    void setTimesReviewed(int t) { timesReviewed = t; }
+
+    int getTimesCorrect() const { return timesCorrect; }
+    void setTimesCorrect(int t) { timesCorrect = t; }
+
+    double getAccuracy() const {
+        return timesReviewed > 0 ? (timesCorrect * 100.0 / timesReviewed) : 0;
     }
-    void displayScore() const {
-        std::cout << "\nScore: " << correctAnswers << "/" << totalAsked << " correct.\n";
+
+    string getProgressBar() const {
+        const int width = 20;
+        int filled = (timesReviewed > 0) ?
+                    (width * timesCorrect / timesReviewed) : 0;
+        string bar(filled, '=');
+        bar += string(width - filled, '-');
+        return "[" + bar + "]";
+    }
+
+    void markCorrect(int currentRound) {
+        timesCorrect++;
+        timesReviewed++;
+        if (box < MAX_BOX) box++;
+        dueRound = currentRound + (box >= 2 ? (1 << (box - 1)) : 1);
+    }
+
+    void markIncorrect(int currentRound) {
+        timesReviewed++;
+        box = 0;
+        dueRound = currentRound + 1;
     }
 };
 
-// Manages a set of flashcards and file I/O
-class FlashcardDeck {
-public:
-    std::vector<Flashcard> cards;
+class Deck {
+private:
+    vector<CardRecord> cards;
+    int currentRound = 0;
 
-    void loadFromFile(const std::string& filename) {
-        std::ifstream in_file(filename.c_str());
-        if (!in_file) return;
-        std::string line;
-        while (std::getline(in_file, line)) {
+    string trim(const string& str) {
+        size_t first = str.find_first_not_of(" \t");
+        if (first == string::npos) return "";
+        size_t last = str.find_last_not_of(" \t");
+        return str.substr(first, (last-first+1));
+    }
+
+    string normalizeString(const string& str) {
+        string result;
+        for (char c : str) {
+            if (isalnum(c)) {
+                result += tolower(c);
+            }
+        }
+        return result;
+    }
+
+public:
+    void addCard(const FlashCard& card) {
+        if (!card.front.empty() && !card.back.empty()) {
+            CardRecord cr;
+            cr.setCard(card);
+            cards.push_back(cr);
+            cout << "Card added successfully!\n";
+        }
+    }
+
+    vector<CardRecord>& getCards() { return cards; }
+    size_t getCardCount() const { return cards.size(); }
+
+    void nextRound() { currentRound++; }
+    int getCurrentRound() const { return currentRound; }
+
+    void reset() {
+        cards.clear();
+        currentRound = 0;
+    }
+
+    vector<CardRecord*> getDueCards() {
+        vector<CardRecord*> due;
+        for (auto& cr : cards) {
+            if (cr.getDueRound() <= currentRound) {
+                due.push_back(&cr);
+            }
+        }
+
+        // Fisher-Yates shuffle
+        for (size_t i = due.size() - 1; i > 0; i--) {
+            size_t j = rand() % (i + 1);
+            swap(due[i], due[j]);
+        }
+
+        return due;
+    }
+
+    bool checkAnswer(const string& userAnswer, const string& correctAnswer) {
+        string normalizedUser = normalizeString(userAnswer);
+        string normalizedCorrect = normalizeString(correctAnswer);
+        return normalizedUser == normalizedCorrect;
+    }
+
+    bool save(const string& filename) {
+        ofstream file(filename);
+        if (!file) {
+            cerr << "Error saving to " << filename << "\n";
+            return false;
+        }
+
+        file << currentRound << "\n";
+        for (const auto& cr : cards) {
+            file << cr.getCard().front << "|" << cr.getCard().back << "|"
+                 << cr.getBox() << "|" << cr.getDueRound() << "|"
+                 << cr.getTimesReviewed() << "|" << cr.getTimesCorrect() << "\n";
+        }
+        cout << "Saved " << cards.size() << " cards to " << filename << "\n";
+        return true;
+    }
+
+    bool load(const string& filename) {
+        ifstream file(filename);
+        if (!file) {
+            cerr << "No save file found, starting fresh\n";
+            return false;
+        }
+
+        cards.clear();
+        string line;
+
+        // First line is current round
+        getline(file, line);
+        try {
+            currentRound = stoi(line);
+        } catch (...) {
+            currentRound = 0;
+        }
+
+        while (getline(file, line)) {
+            line = trim(line);
             if (line.empty()) continue;
-            size_t p1 = line.find('|'), p2 = line.find('|', p1 + 1);
-            if (p1 == std::string::npos || p2 == std::string::npos) continue;
-            std::string q = line.substr(0, p1);
-            std::string a = line.substr(p1 + 1, p2 - p1 - 1);
-            bool h = (line[p2 + 1] == 'h' || line[p2 + 1] == 'H');
-            cards.emplace_back(q, a, h);
-        }
-        in_file.close();
-    }
-    void saveToFile(const std::string& filename) {
-        std::ofstream out_file(filename.c_str());
-        for (const auto& card : cards) {
-            out_file << card.question << "|" << card.answer << "|";
-            out_file << (card.hard ? 'h' : 'e') << "\n";
-        }
-        out_file.close();
-    }
-};
 
-// Implements a simple spaced-repetition review
-class SpacedRepetition {
-public:
-    // Ask cards in a queue; re-add hard ones for another round
-    void review(FlashcardDeck& deck, ScoreTracker& score) {
-        std::vector<Flashcard> queue = deck.cards;
-        while (!queue.empty()) {
-            Flashcard card = queue.front();
-            queue.erase(queue.begin());
+            vector<string> parts;
+            stringstream ss(line);
+            string part;
 
-            std::cout << "Q: " << card.question << "\n";
-            std::cin.get();  // wait for user to press Enter
-            std::cout << "A: " << card.answer << "\n";
-
-            char response;
-            std::cout << "Did you answer correctly? (y/n): ";
-            std::cin >> response;
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            bool correct = (response == 'y' || response == 'Y');
-            score.recordAnswer(correct);
-
-            // If correct, let user mark difficulty; if wrong, mark hard automatically
-            if (correct) {
-                char diff;
-                std::cout << "Mark difficulty? (e for easy, h for hard): ";
-                std::cin >> diff;
-                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-                card.hard = (diff == 'h' || diff == 'H');
-            } else {
-                card.hard = true;
+            while (getline(ss, part, '|')) {
+                parts.push_back(part);
             }
 
-            if (card.hard) {
-                // Re-add hard cards to the end of the queue
-                queue.push_back(card);
+            if (parts.size() != 6) continue;
+
+            try {
+                CardRecord cr;
+                cr.setCard(FlashCard(parts[0], parts[1]));
+                cr.setBox(stoi(parts[2]));
+                cr.setDueRound(stoi(parts[3]));
+                cr.setTimesReviewed(stoi(parts[4]));
+                cr.setTimesCorrect(stoi(parts[5]));
+                cards.push_back(cr);
+            } catch (...) {
+                cerr << "Error parsing card data\n";
+            }
+        }
+        cout << "Loaded " << cards.size() << " cards\n";
+        return true;
+    }
+};
+
+class SessionManager {
+private:
+    void clearInput() {
+        cin.clear();
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    }
+
+public:
+    void runSession(Deck& deck) {
+        deck.nextRound();
+        auto& allCards = deck.getCards();
+
+        if (allCards.empty()) {
+            cout << "\nNo cards available for review!\n";
+            return;
+        }
+
+        cout << "\n=== REVIEW SESSION ===\n";
+        cout << "Press Enter to reveal answer, then enter 'c' for correct or 'i' for incorrect\n";
+        cout << "Enter 'q' to quit\n\n";
+
+        // Shuffle cards
+        for (size_t i = allCards.size() - 1; i > 0; i--) {
+            size_t j = rand() % (i + 1);
+            swap(allCards[i], allCards[j]);
+        }
+
+        for (auto& cr : allCards) {
+            cout << "Q: " << cr.getCard().front << "\n";
+            cout << "Press Enter to show answer...";
+            string input;
+            getline(cin, input);
+
+            if (input == "q") {
+                break;
+            }
+
+            cout << "\nA: " << cr.getCard().back << "\n\n";
+
+            while (true) {
+                cout << "Was your answer correct? (c/i): ";
+                getline(cin, input);
+
+                if (input == "c") {
+                    cr.markCorrect(deck.getCurrentRound());
+                    cout << " Marked as correct! (Box " << cr.getBox() << ")\n\n";
+                    break;
+                } else if (input == "i") {
+                    cr.markIncorrect(deck.getCurrentRound());
+                    cout << " Marked as incorrect (Box 0)\n\n";
+                    break;
+                } else if (input == "q") {
+                    return;
+                } else {
+                    cout << "Invalid input. Please enter 'c' or 'i'.\n";
+                }
+            }
+        }
+        cout << "\nSession complete!\n";
+    }
+};
+
+class FlashCardApp {
+private:
+    Deck deck;
+    SessionManager sessionManager;
+    const string filename = "spaced_cards.txt";
+
+    void clearInput() {
+        cin.clear();
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    }
+
+    void resetData() {
+        cout << "\n=== RESET ALL DATA ===\n";
+        cout << "This will delete ALL cards and reset all progress!\n";
+        cout << "Are you sure? (yes/no): ";
+
+        string confirmation;
+        getline(cin, confirmation);
+
+        if (confirmation == "yes") {
+            deck.reset();
+            remove(filename.c_str());
+            cout << "All data has been reset.\n";
+        } else {
+            cout << "Reset cancelled.\n";
+        }
+    }
+
+    void createCard() {
+        string front, back;
+        cout << "\nEnter front (question): ";
+        getline(cin, front);
+        cout << "Enter back (answer): ";
+        getline(cin, back);
+
+        deck.addCard(FlashCard(front, back));
+    }
+
+    void showStatistics() {
+        if (deck.getCardCount() == 0) {
+            cout << "\nNo cards available!\n";
+            return;
+        }
+
+        cout << "\n=== PERFORMANCE STATISTICS ===\n";
+
+        int totalReviews = 0;
+        int totalCorrect = 0;
+        map<int, int> boxCounts;
+        for (int i = 0; i <= MAX_BOX; i++) boxCounts[i] = 0;
+
+        for (const auto& cr : deck.getCards()) {
+            totalReviews += cr.getTimesReviewed();
+            totalCorrect += cr.getTimesCorrect();
+            boxCounts[cr.getBox()]++;
+        }
+
+        double overallAccuracy = totalReviews > 0 ?
+            (totalCorrect * 100.0 / totalReviews) : 0;
+
+        cout << "\nOverall:\n";
+        cout << "Total reviews: " << totalReviews << "\n";
+        cout << "Correct answers: " << totalCorrect << "\n";
+        cout << "Accuracy: " << fixed << setprecision(1)
+             << overallAccuracy << "%\n";
+
+        cout << "\nCard Details:\n";
+        for (size_t i = 0; i < deck.getCards().size(); i++) {
+            const auto& cr = deck.getCards()[i];
+            cout << "\nCard #" << (i+1) << " (Box " << cr.getBox() << ")\n";
+            cout << "Q: " << cr.getCard().front << "\n";
+            cout << cr.getProgressBar() << "  "
+                 << fixed << setprecision(1) << cr.getAccuracy() << "%\n";
+            cout << "Reviews: " << cr.getTimesReviewed()
+                 << " | Correct: " << cr.getTimesCorrect() << "\n";
+        }
+    }
+
+    void showHeatmap() {
+        if (deck.getCardCount() == 0) {
+            cout << "\nNo cards available!\n";
+            return;
+        }
+
+        map<int, int> boxCounts;
+        for (int i = 0; i <= MAX_BOX; i++) {
+            boxCounts[i] = 0;
+        }
+
+        for (const auto& cr : deck.getCards()) {
+            boxCounts[cr.getBox()]++;
+        }
+
+        cout << "\n=== DIFFICULTY HEATMAP ===\n";
+        cout << "Box 0: Easiest, Box " << MAX_BOX << ": Hardest\n\n";
+
+        const int max_bar_length = 50;
+        int max_count = 0;
+        for (const auto& [box, count] : boxCounts) {
+            if (count > max_count) max_count = count;
+        }
+
+        for (int i = 0; i <= MAX_BOX; i++) {
+            int bar_length = max_count > 0 ?
+                (boxCounts[i] * max_bar_length / max_count) : 0;
+            cout << "[" << i << "] " << string(bar_length, '#')
+                 << " " << boxCounts[i] << " cards\n";
+        }
+    }
+
+public:
+    FlashCardApp() {
+        srand(time(0));
+        deck.load(filename);
+    }
+
+    ~FlashCardApp() {
+        deck.save(filename);
+    }
+
+    void run() {
+        while (true) {
+            cout << "\n===== FLASHCARDS =====\n";
+            cout << "Total Cards: " << deck.getCardCount();
+            cout << "\n\n1. Create Card\n";
+            cout << "2. Review Session\n";
+            cout << "3. Show Statistics\n";
+            cout << "4. Show Heatmap\n";
+            cout << "5. Reset All Data\n";
+            cout << "6. Exit\n";
+            cout << "Choose (1-6): ";
+
+            int choice;
+            cin >> choice;
+            clearInput();
+
+            switch (choice) {
+                case 1: createCard(); break;
+                case 2: sessionManager.runSession(deck); break;
+                case 3: showStatistics(); break;
+                case 4: showHeatmap(); break;
+                case 5: resetData(); break;
+                case 6: return;
+                default: cout << "Invalid choice!\n";
             }
         }
     }
 };
 
 int main() {
-    std::cout << "Flashcard Program (Version 3 - Spaced Repetition)\n";
-    FlashcardDeck deck;
-    const std::string filename = "flashcards.txt";
-
-    // Load existing flashcards
-    deck.loadFromFile(filename);
-
-    // Add new flashcards
-    while (true) {
-        Flashcard card;
-        std::cout << "\nEnter question (leave blank to finish): ";
-        std::getline(std::cin, card.question);
-        if (card.question.empty()) break;
-        std::cout << "Enter answer: ";
-        std::getline(std::cin, card.answer);
-        card.hard = false;
-        deck.cards.push_back(card);
-    }
-
-    // Run spaced-repetition review
-    ScoreTracker score;
-    SpacedRepetition trainer;
-    trainer.review(deck, score);
-
-    // Show score and save progress
-    score.displayScore();
-    deck.saveToFile(filename);
-    std::cout << "\nProgress saved. Goodbye!\n";
+    FlashCardApp app;
+    app.run();
     return 0;
 }
