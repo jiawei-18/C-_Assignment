@@ -207,41 +207,61 @@ public:
 };
 
 class SessionManager {
+private:
+    void clearInput() {
+        cin.clear();
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    }
+
 public:
     void runSession(Deck& deck) {
         deck.nextRound();
-        auto dueCards = deck.getDueCards();
+        auto& allCards = deck.getCards();
 
-        if (dueCards.empty()) {
-            cout << "\nNo cards due for review today!\n";
+        if (allCards.empty()) {
+            cout << "\nNo cards available for review!\n";
             return;
         }
 
-        cout << "\n=== REVIEW SESSION (Round " << deck.getCurrentRound() << ") ===\n";
-        cout << "Cards due: " << dueCards.size() << "\n\n";
+        cout << "\n=== REVIEW SESSION ===\n";
+        cout << "Press Enter to reveal answer, then enter 'c' for correct or 'i' for incorrect\n";
+        cout << "Enter 'q' to quit\n\n";
 
-        for (size_t i = 0; i < dueCards.size(); i++) {
-            auto cr = dueCards[i];
-            cout << "Card " << (i+1) << "/" << dueCards.size() << "  ";
-            cout << "Box " << cr->getBox() << "  ";
-            cout << cr->getProgressBar() << "\n";
+        // Shuffle cards
+        for (size_t i = allCards.size() - 1; i > 0; i--) {
+            size_t j = rand() % (i + 1);
+            swap(allCards[i], allCards[j]);
+        }
 
-            cout << "\nQ: " << cr->getCard().front << "\n";
+        for (auto& cr : allCards) {
+            cout << "Q: " << cr.getCard().front << "\n";
+            cout << "Press Enter to show answer...";
+            string input;
+            getline(cin, input);
 
-            string userAnswer;
-            cout << "Your answer: ";
-            getline(cin, userAnswer);
+            if (input == "q") {
+                break;
+            }
 
-            cout << "\nA: " << cr->getCard().back << "\n\n";
+            cout << "\nA: " << cr.getCard().back << "\n\n";
 
-            if (deck.checkAnswer(userAnswer, cr->getCard().back)) {
-                cr->markCorrect(deck.getCurrentRound());
-                cout << " Correct! (Box " << cr->getBox() << ")\n";
-            } else {
-                cr->markIncorrect(deck.getCurrentRound());
-                cout << " Incorrect (Box 0)\n";
-                cout << "Your answer: \"" << userAnswer << "\"\n";
-                cout << "Correct answer: \"" << cr->getCard().back << "\"\n";
+            while (true) {
+                cout << "Was your answer correct? (c/i): ";
+                getline(cin, input);
+
+                if (input == "c") {
+                    cr.markCorrect(deck.getCurrentRound());
+                    cout << " Marked as correct! (Box " << cr.getBox() << ")\n\n";
+                    break;
+                } else if (input == "i") {
+                    cr.markIncorrect(deck.getCurrentRound());
+                    cout << " Marked as incorrect (Box 0)\n\n";
+                    break;
+                } else if (input == "q") {
+                    return;
+                } else {
+                    cout << "Invalid input. Please enter 'c' or 'i'.\n";
+                }
             }
         }
         cout << "\nSession complete!\n";
@@ -293,7 +313,6 @@ private:
         }
 
         cout << "\n=== PERFORMANCE STATISTICS ===\n";
-        cout << "Current Round: " << deck.getCurrentRound() << "\n";
 
         int totalReviews = 0;
         int totalCorrect = 0;
@@ -319,7 +338,6 @@ private:
         for (size_t i = 0; i < deck.getCards().size(); i++) {
             const auto& cr = deck.getCards()[i];
             cout << "\nCard #" << (i+1) << " (Box " << cr.getBox() << ")\n";
-            cout << "Due round: " << cr.getDueRound() << "\n";
             cout << "Q: " << cr.getCard().front << "\n";
             cout << cr.getProgressBar() << "  "
                  << fixed << setprecision(1) << cr.getAccuracy() << "%\n";
@@ -372,9 +390,8 @@ public:
 
     void run() {
         while (true) {
-            cout << "\n===== FLASHCARDS =====";
-            cout << "\nCurrent Round: " << deck.getCurrentRound();
-            cout << "\nTotal Cards: " << deck.getCardCount();
+            cout << "\n===== FLASHCARDS =====\n";
+            cout << "Total Cards: " << deck.getCardCount();
             cout << "\n\n1. Create Card\n";
             cout << "2. Review Session\n";
             cout << "3. Show Statistics\n";
